@@ -83,7 +83,7 @@ func main() {
 			w.WriteHeader(400)
 		}
 
-		if _, err := bot.PushMessage("<to>", linebot.NewTextMessage("hello")).Do(); err != nil {
+		if _, err := bot.PushMessage("U3c5ce2f10e91593849110b750e6a0d6b", linebot.NewImageMessage("https://example.com/original.jpg", "https://example.com/preview.jpg")).Do(); err != nil {
 			log.Print(err)
 		}
 	})
