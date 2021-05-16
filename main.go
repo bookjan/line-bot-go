@@ -83,7 +83,7 @@ func main() {
 			w.WriteHeader(400)
 		}
 
-		if _, err := bot.PushMessage("U3c5ce2f10e91593849110b750e6a0d6b", linebot.NewImageMessage("https://example.com/original.jpg", "https://example.com/preview.jpg")).Do(); err != nil {
+		if _, err := bot.PushMessage("U3c5ce2f10e91593849110b750e6a0d6b", linebot.NewImageMessage("https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png", "https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png")).Do(); err != nil {
 			log.Print(err)
 		}
 	})
