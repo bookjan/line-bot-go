@@ -42,12 +42,12 @@ func main() {
 		fmt.Printf("%s\n", r.RequestURI)
 		w.Header().Set("Content-Type", "image/x-icon")
 		w.Header().Set("Cache-Control", "public, max-age=7776000")
-		fmt.Fprintln(w, "data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQEAYAAABPYyMiAAAABmJLR0T///////8JWPfcAAAACXBIWXMAAABIAAAASABGyWs+AAAAF0lEQVRIx2NgGAWjYBSMglEwCkbBSAcACBAAAeaR9cIAAAAASUVORK5CYII=\n")
+		fmt.Fprintln(w, "data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQEAYAAABPYyMiAAAABmJLR0T///////8JWPfcAAAACXBIWXMAAABIAAAASABGyWs+AAAAF0lEQVRIx2NgGAWjYBSMglEwCkbBSAcACBAAAeaR9cIAAAAASUVORK5CYII=")
 	})
 
 	// Setup HTTP Server for receiving requests from LINE platform
-	http.HandleFunc("/callback", func(w http.ResponseWriter, req *http.Request) {
-		events, err := bot.ParseRequest(req)
+	http.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		events, err := bot.ParseRequest(r)
 		if err != nil {
 			if err == linebot.ErrInvalidSignature {
 				w.WriteHeader(400)
@@ -57,6 +57,7 @@ func main() {
 			return
 		}
 		for _, event := range events {
+			log.Print("UserID: ", event.Source.UserID)
 			if event.Type == linebot.EventTypeMessage {
 				switch message := event.Message.(type) {
 				case *linebot.TextMessage:
@@ -71,6 +72,19 @@ func main() {
 					}
 				}
 			}
+		}
+	})
+
+	http.HandleFunc("/detect", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "404 not found.", http.StatusNotFound)
+			return
+		} else {
+			w.WriteHeader(400)
+		}
+
+		if _, err := bot.PushMessage("<to>", linebot.NewTextMessage("hello")).Do(); err != nil {
+			log.Print(err)
 		}
 	})
 	// This is just sample code.
