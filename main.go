@@ -80,13 +80,14 @@ func main() {
 			http.Error(w, "404 not found.", http.StatusNotFound)
 			return
 		} else {
-			w.WriteHeader(400)
+			w.WriteHeader(200)
 		}
 
 		if _, err := bot.PushMessage("U3c5ce2f10e91593849110b750e6a0d6b", linebot.NewImageMessage("https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png", "https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png")).Do(); err != nil {
 			log.Print(err)
 		}
 	})
+
 	// This is just sample code.
 	// For actual use, you must support HTTPS by using `ListenAndServeTLS`, a reverse proxy or something else.
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
