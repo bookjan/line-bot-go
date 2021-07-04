@@ -119,30 +119,30 @@ func (route *App) UploadImage(w http.ResponseWriter, r *http.Request) {
 	file, handler, err := r.FormFile("image")
 	r.ParseMultipartForm(10 << 20)
 	if err != nil {
-		respondWithJSON(w, http.StatusBadRequest, err.Error())
+		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	defer file.Close()
 
 	imagePath := handler.Filename
 
-	bucket := "golang-cloud-firestore.appspot.com"
+	bucket := "ct-backend-7776d.appspot.com"
 
 	wc := route.storage.Bucket(bucket).Object(imagePath).NewWriter(route.ctx)
 	_, err = io.Copy(wc, file)
 	if err != nil {
-		respondWithJSON(w, http.StatusBadRequest, err.Error())
+		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 
 	}
 	if err := wc.Close(); err != nil {
-		respondWithJSON(w, http.StatusBadRequest, err.Error())
+		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	err = CreateImageUrl(imagePath, bucket, route.ctx, route.client)
 	if err != nil {
-		respondWithJSON(w, http.StatusBadRequest, err.Error())
+		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -154,9 +154,9 @@ func (route *App) lineServiceCallback(w http.ResponseWriter, r *http.Request) {
 	events, err := route.linebotCient.ParseRequest(r)
 	if err != nil {
 		if err == linebot.ErrInvalidSignature {
-			respondWithJSON(w, http.StatusBadRequest, err.Error())
+			respondWithError(w, http.StatusBadRequest, err.Error())
 		} else {
-			respondWithJSON(w, http.StatusInternalServerError, err.Error())
+			respondWithError(w, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
@@ -182,7 +182,7 @@ func (route *App) lineServiceCallback(w http.ResponseWriter, r *http.Request) {
 func (route *App) DetectImage(w http.ResponseWriter, r *http.Request) {
 	if _, err := route.linebotCient.BroadcastMessage(linebot.NewImageMessage("https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png", "https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png")).Do(); err != nil {
 		log.Print(err)
-		respondWithJSON(w, http.StatusBadRequest, err.Error())
+		respondWithError(w, http.StatusBadRequest, err.Error())
 	}
 
 	respondWithJSON(w, http.StatusOK, "OK")
