@@ -180,13 +180,12 @@ func (route *App) lineServiceCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (route *App) DetectImage(w http.ResponseWriter, r *http.Request) {
-	respondWithJSON(w, http.StatusOK, "OK")
-}
-
-func sendImageMessage(linebotCient *linebot.Client) {
-	if _, err := linebotCient.BroadcastMessage(linebot.NewImageMessage("https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png", "https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png")).Do(); err != nil {
+	if _, err := route.linebotCient.BroadcastMessage(linebot.NewImageMessage("https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png", "https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png")).Do(); err != nil {
 		log.Print(err)
+		respondWithJSON(w, http.StatusBadRequest, err.Error())
 	}
+
+	respondWithJSON(w, http.StatusOK, "OK")
 }
 
 func CreateImageUrl(imagePath string, bucket string, ctx context.Context, client *firestore.Client) error {
