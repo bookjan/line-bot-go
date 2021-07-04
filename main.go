@@ -167,7 +167,7 @@ func (route *App) UploadImageBase64(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	imagePath := "test_" + time.Now().String()
+	imagePath := "test_" + time.Now().String() + ".png"
 	bucket := "ct-backend-7776d.appspot.com"
 
 	reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(detectedImage.Data))
