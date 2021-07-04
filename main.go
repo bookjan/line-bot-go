@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"context"
 
@@ -106,6 +109,7 @@ func respondWithError(w http.ResponseWriter, code int, message string) {
 func (route *App) initializeRoutes() {
 	route.Router.HandleFunc("/", route.Home).Methods("GET")
 	route.Router.HandleFunc("/upload/image", route.UploadImage).Methods("POST")
+	route.Router.HandleFunc("/upload/image/base64", route.UploadImageBase64).Methods("POST")
 	route.Router.HandleFunc("/callback", route.lineServiceCallback).Methods("POST")
 	route.Router.HandleFunc("/detect/image", route.DetectImage).Methods("POST")
 }
@@ -115,7 +119,6 @@ func (route *App) Home(w http.ResponseWriter, r *http.Request) {
 }
 
 func (route *App) UploadImage(w http.ResponseWriter, r *http.Request) {
-
 	file, handler, err := r.FormFile("image")
 	r.ParseMultipartForm(10 << 20)
 	if err != nil {
@@ -143,6 +146,46 @@ func (route *App) UploadImage(w http.ResponseWriter, r *http.Request) {
 	err = CreateImageUrl(imagePath, bucket, route.ctx, route.client)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, "Create image success.")
+}
+
+type DetectedImage struct {
+	Data string
+	Name string
+}
+
+func (route *App) UploadImageBase64(w http.ResponseWriter, r *http.Request) {
+	var detectedImage DetectedImage
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&detectedImage)
+
+	if err != nil {
+		panic(err)
+	}
+	defer r.Body.Close()
+
+	imagePath := "test_" + time.Now().String()
+	bucket := "ct-backend-7776d.appspot.com"
+
+	reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(detectedImage.Data))
+	wc := route.storage.Bucket(bucket).Object(imagePath).NewWriter(route.ctx)
+	_, err = io.Copy(wc, reader)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+
+	}
+	if err := wc.Close(); err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	err = CreateImageUrl(imagePath, bucket, route.ctx, route.client)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
