@@ -1,19 +1,65 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 
+	"context"
+
+	"cloud.google.com/go/firestore"
+	cloud "cloud.google.com/go/storage"
+	firebase "firebase.google.com/go"
+
+	"github.com/bookjan/line-bot-go/models"
+	"github.com/gorilla/mux"
 	"github.com/line/line-bot-sdk-go/v7/linebot"
+	"google.golang.org/api/option"
 )
 
+type App struct {
+	Router       *mux.Router
+	ctx          context.Context
+	client       *firestore.Client
+	storage      *cloud.Client
+	linebotCient *linebot.Client
+}
+
 func main() {
-	var port = os.Getenv("PORT")
-	if port == "" {
-		port = "80"
+	route := App{}
+	route.Init()
+	route.Run()
+}
+
+func (route *App) Init() {
+
+	route.ctx = context.Background()
+
+	sa := option.WithCredentialsFile("serviceAccountKey.json")
+
+	var err error
+
+	app, err := firebase.NewApp(route.ctx, nil, sa)
+	if err != nil {
+		log.Fatalln(err)
 	}
+
+	route.client, err = app.Firestore(route.ctx)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	route.storage, err = cloud.NewClient(route.ctx, sa)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	route.Router = mux.NewRouter()
+	route.initializeRoutes()
+	fmt.Println("Successfully connected at port : " + route.GetPort())
 
 	secret := os.Getenv("CHANNEL_SECRET")
 	if secret == "" {
@@ -25,72 +71,134 @@ func main() {
 		log.Fatal("CHANNEL_TOKEN must be set")
 	}
 
-	bot, err := linebot.New(
+	route.linebotCient, err = linebot.New(
 		secret,
 		token,
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
+}
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("%s\n", r.RequestURI)
-		fmt.Fprintln(w, "Hello, World!")
-	})
+func (route *App) GetPort() string {
+	var port = os.Getenv("PORT")
+	if port == "" {
+		port = "80"
+	}
+	return ":" + port
+}
 
-	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("%s\n", r.RequestURI)
-		w.Header().Set("Content-Type", "image/x-icon")
-		w.Header().Set("Cache-Control", "public, max-age=7776000")
-		fmt.Fprintln(w, "data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQEAYAAABPYyMiAAAABmJLR0T///////8JWPfcAAAACXBIWXMAAABIAAAASABGyWs+AAAAF0lEQVRIx2NgGAWjYBSMglEwCkbBSAcACBAAAeaR9cIAAAAASUVORK5CYII=")
-	})
+func (route *App) Run() {
+	log.Fatal(http.ListenAndServe(route.GetPort(), route.Router))
+}
 
-	// Setup HTTP Server for receiving requests from LINE platform
-	http.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		events, err := bot.ParseRequest(r)
-		if err != nil {
-			if err == linebot.ErrInvalidSignature {
-				w.WriteHeader(400)
-			} else {
-				w.WriteHeader(500)
-			}
-			return
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	response, _ := json.Marshal(payload)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(response)
+}
+
+func respondWithError(w http.ResponseWriter, code int, message string) {
+	respondWithJSON(w, code, map[string]string{"error": message})
+}
+
+func (route *App) initializeRoutes() {
+	route.Router.HandleFunc("/", route.Home).Methods("GET")
+	route.Router.HandleFunc("/upload/image", route.UploadImage).Methods("POST")
+	route.Router.HandleFunc("/callback", route.lineServiceCallback).Methods("POST")
+	route.Router.HandleFunc("/detect/image", route.DetectImage).Methods("POST")
+}
+
+func (route *App) Home(w http.ResponseWriter, r *http.Request) {
+	respondWithJSON(w, http.StatusOK, "Hello World!")
+}
+
+func (route *App) UploadImage(w http.ResponseWriter, r *http.Request) {
+
+	file, handler, err := r.FormFile("image")
+	r.ParseMultipartForm(10 << 20)
+	if err != nil {
+		respondWithJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer file.Close()
+
+	imagePath := handler.Filename
+
+	bucket := "golang-cloud-firestore.appspot.com"
+
+	wc := route.storage.Bucket(bucket).Object(imagePath).NewWriter(route.ctx)
+	_, err = io.Copy(wc, file)
+	if err != nil {
+		respondWithJSON(w, http.StatusBadRequest, err.Error())
+		return
+
+	}
+	if err := wc.Close(); err != nil {
+		respondWithJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err = CreateImageUrl(imagePath, bucket, route.ctx, route.client)
+	if err != nil {
+		respondWithJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, "Create image success.")
+}
+
+// Setup HTTP Server for receiving requests from LINE platform
+func (route *App) lineServiceCallback(w http.ResponseWriter, r *http.Request) {
+	events, err := route.linebotCient.ParseRequest(r)
+	if err != nil {
+		if err == linebot.ErrInvalidSignature {
+			respondWithJSON(w, http.StatusBadRequest, err.Error())
+		} else {
+			respondWithJSON(w, http.StatusInternalServerError, err.Error())
 		}
-		for _, event := range events {
-			log.Print("UserID: ", event.Source.UserID)
-			if event.Type == linebot.EventTypeMessage {
-				switch message := event.Message.(type) {
-				case *linebot.TextMessage:
-					if _, err = bot.ReplyMessage(event.ReplyToken, linebot.NewTextMessage(message.Text)).Do(); err != nil {
-						log.Print(err)
-					}
-				case *linebot.StickerMessage:
-					replyMessage := fmt.Sprintf(
-						"sticker id is %s, stickerResourceType is %s", message.StickerID, message.StickerResourceType)
-					if _, err = bot.ReplyMessage(event.ReplyToken, linebot.NewTextMessage(replyMessage)).Do(); err != nil {
-						log.Print(err)
-					}
+		return
+	}
+	for _, event := range events {
+		log.Print("UserID: ", event.Source.UserID)
+		if event.Type == linebot.EventTypeMessage {
+			switch message := event.Message.(type) {
+			case *linebot.TextMessage:
+				if _, err = route.linebotCient.ReplyMessage(event.ReplyToken, linebot.NewTextMessage(message.Text)).Do(); err != nil {
+					log.Print(err)
+				}
+			case *linebot.StickerMessage:
+				replyMessage := fmt.Sprintf(
+					"sticker id is %s, stickerResourceType is %s", message.StickerID, message.StickerResourceType)
+				if _, err = route.linebotCient.ReplyMessage(event.ReplyToken, linebot.NewTextMessage(replyMessage)).Do(); err != nil {
+					log.Print(err)
 				}
 			}
 		}
-	})
-
-	http.HandleFunc("/detect", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			http.Error(w, "404 not found.", http.StatusNotFound)
-			return
-		} else {
-			w.WriteHeader(200)
-		}
-
-		if _, err := bot.BroadcastMessage(linebot.NewImageMessage("https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png", "https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png")).Do(); err != nil {
-			log.Print(err)
-		}
-	})
-
-	// This is just sample code.
-	// For actual use, you must support HTTPS by using `ListenAndServeTLS`, a reverse proxy or something else.
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatal(err)
 	}
+}
+
+func (route *App) DetectImage(w http.ResponseWriter, r *http.Request) {
+	respondWithJSON(w, http.StatusOK, "OK")
+}
+
+func sendImageMessage(linebotCient *linebot.Client) {
+	if _, err := linebotCient.BroadcastMessage(linebot.NewImageMessage("https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png", "https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png")).Do(); err != nil {
+		log.Print(err)
+	}
+}
+
+func CreateImageUrl(imagePath string, bucket string, ctx context.Context, client *firestore.Client) error {
+	imageStructure := models.ImageStructure{
+		ImageName: imagePath,
+		URL:       "https://storage.cloud.google.com/" + bucket + "/" + imagePath,
+	}
+
+	_, _, err := client.Collection("image").Add(ctx, imageStructure)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
