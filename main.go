@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,88 +109,13 @@ func respondWithError(w http.ResponseWriter, code int, message string) {
 
 func (route *App) initializeRoutes() {
 	route.Router.HandleFunc("/", route.Home).Methods("GET")
-	route.Router.HandleFunc("/upload/image", route.UploadImage).Methods("POST")
-	route.Router.HandleFunc("/upload/image/base64", route.UploadImageBase64).Methods("POST")
 	route.Router.HandleFunc("/callback", route.lineServiceCallback).Methods("POST")
 	route.Router.HandleFunc("/detect/image", route.DetectImage).Methods("POST")
+	route.Router.HandleFunc("/upload/image", route.UploadImage).Methods("POST")
 }
 
 func (route *App) Home(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, "Hello World!")
-}
-
-func (route *App) UploadImage(w http.ResponseWriter, r *http.Request) {
-	file, handler, err := r.FormFile("image")
-	r.ParseMultipartForm(10 << 20)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	defer file.Close()
-
-	imagePath := handler.Filename
-
-	bucket := "ct-backend-7776d.appspot.com"
-
-	wc := route.storage.Bucket(bucket).Object(imagePath).NewWriter(route.ctx)
-	_, err = io.Copy(wc, file)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
-		return
-
-	}
-	if err := wc.Close(); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	err = CreateImageUrl(imagePath, bucket, route.ctx, route.client)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	respondWithJSON(w, http.StatusCreated, "Create image success.")
-}
-
-type DetectedImage struct {
-	Data string
-	Name string
-}
-
-func (route *App) UploadImageBase64(w http.ResponseWriter, r *http.Request) {
-	var detectedImage DetectedImage
-	decoder := json.NewDecoder(r.Body)
-	err := decoder.Decode(&detectedImage)
-
-	if err != nil {
-		panic(err)
-	}
-	defer r.Body.Close()
-
-	imagePath := "test_" + time.Now().String() + ".png"
-	bucket := "ct-backend-7776d.appspot.com"
-
-	reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(detectedImage.Data))
-	wc := route.storage.Bucket(bucket).Object(imagePath).NewWriter(route.ctx)
-	_, err = io.Copy(wc, reader)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
-		return
-
-	}
-	if err := wc.Close(); err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	err = CreateImageUrl(imagePath, bucket, route.ctx, route.client)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	respondWithJSON(w, http.StatusCreated, "Create image success.")
 }
 
 // Setup HTTP Server for receiving requests from LINE platform
@@ -222,23 +148,77 @@ func (route *App) lineServiceCallback(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (route *App) DetectImage(w http.ResponseWriter, r *http.Request) {
-	if _, err := route.linebotCient.BroadcastMessage(linebot.NewImageMessage("https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png", "https://pjreddie.com/media/image/Screen_Shot_2018-03-24_at_10.48.42_PM.png")).Do(); err != nil {
-		log.Print(err)
-		respondWithError(w, http.StatusBadRequest, err.Error())
-	}
-
-	respondWithJSON(w, http.StatusOK, "OK")
+type DetectedImage struct {
+	Data string
+	Name string
 }
 
-func CreateImageUrl(imagePath string, bucket string, ctx context.Context, client *firestore.Client) error {
+func (route *App) DetectImage(w http.ResponseWriter, r *http.Request) {
+	var detectedImage DetectedImage
+	decoder := json.NewDecoder(r.Body)
+
+	err := decoder.Decode(&detectedImage)
+	if err != nil {
+		panic(err)
+	}
+	defer r.Body.Close()
+
+	imagePath := "detected_" + strconv.FormatInt(time.Now().Unix(), 10) + ".png"
+	base64Data := detectedImage.Data[strings.IndexByte(detectedImage.Data, ',')+1:]
+	reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(base64Data))
+	err = SaveImageHelper(reader, imagePath, route)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, "Create image success.")
+}
+
+func (route *App) UploadImage(w http.ResponseWriter, r *http.Request) {
+	file, handler, err := r.FormFile("image")
+	r.ParseMultipartForm(10 << 20)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer file.Close()
+
+	imagePath := handler.Filename
+	err = SaveImageHelper(file, imagePath, route)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, "Create image success.")
+}
+
+func SaveImageHelper(imageData io.Reader, imagePath string, route *App) error {
+	bucket := "ct-backend-7776d.appspot.com"
 	imageStructure := models.ImageStructure{
 		ImageName: imagePath,
 		URL:       "https://storage.cloud.google.com/" + bucket + "/" + imagePath,
 	}
 
-	_, _, err := client.Collection("image").Add(ctx, imageStructure)
+	wc := route.storage.Bucket(bucket).Object(imagePath).NewWriter(route.ctx)
+	_, err := io.Copy(wc, imageData)
 	if err != nil {
+		return err
+
+	}
+
+	if err := wc.Close(); err != nil {
+		return err
+	}
+
+	_, _, err = route.client.Collection("image").Add(route.ctx, imageStructure)
+	if err != nil {
+		return err
+	}
+
+	if _, err := route.linebotCient.BroadcastMessage(linebot.NewImageMessage(imageStructure.URL, imageStructure.URL)).Do(); err != nil {
 		return err
 	}
 
