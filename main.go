@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -42,7 +43,7 @@ func (route *App) Init() {
 
 	route.ctx = context.Background()
 
-	sa := option.WithCredentialsFile("serviceAccountKey.json")
+	sa := option.WithCredentialsFile("config/serviceAccountKey.json")
 
 	var err error
 
@@ -202,14 +203,29 @@ func SaveImageHelper(imageData io.Reader, imagePath string, route *App) error {
 		URL:       "https://storage.cloud.google.com/" + bucket + "/" + imagePath,
 	}
 
-	wc := route.storage.Bucket(bucket).Object(imagePath).NewWriter(route.ctx)
-	_, err := io.Copy(wc, imageData)
+	pkey, err := ioutil.ReadFile("config/key.pem")
 	if err != nil {
 		return err
+	}
 
+	wc := route.storage.Bucket(bucket).Object(imagePath).NewWriter(route.ctx)
+	_, err = io.Copy(wc, imageData)
+	if err != nil {
+		return err
 	}
 
 	if err := wc.Close(); err != nil {
+		return err
+	}
+
+	expires := time.Now().Add(time.Hour * 24 * 365)
+	url, err := cloud.SignedURL(bucket, imagePath, &cloud.SignedURLOptions{
+		GoogleAccessID: "ct-backend-7776d@appspot.gserviceaccount.com",
+		PrivateKey:     pkey,
+		Method:         "GET",
+		Expires:        expires,
+	})
+	if err != nil {
 		return err
 	}
 
@@ -218,7 +234,7 @@ func SaveImageHelper(imageData io.Reader, imagePath string, route *App) error {
 		return err
 	}
 
-	if _, err := route.linebotCient.BroadcastMessage(linebot.NewImageMessage(imageStructure.URL, imageStructure.URL)).Do(); err != nil {
+	if _, err := route.linebotCient.BroadcastMessage(linebot.NewImageMessage(url, url)).Do(); err != nil {
 		return err
 	}
 
