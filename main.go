@@ -197,7 +197,7 @@ func (route *App) UploadImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func SaveImageHelper(imageData io.Reader, imagePath string, route *App) error {
-	bucket := "ct-backend-7776d.appspot.com"
+	bucket := "somedomain.appspot.com"
 	imageStructure := models.ImageStructure{
 		ImageName: imagePath,
 		URL:       "https://storage.cloud.google.com/" + bucket + "/" + imagePath,
@@ -220,7 +220,7 @@ func SaveImageHelper(imageData io.Reader, imagePath string, route *App) error {
 
 	expires := time.Now().Add(time.Hour * 24 * 365)
 	url, err := cloud.SignedURL(bucket, imagePath, &cloud.SignedURLOptions{
-		GoogleAccessID: "ct-backend-7776d@appspot.gserviceaccount.com",
+		GoogleAccessID: "somedomain@appspot.gserviceaccount.com",
 		PrivateKey:     pkey,
 		Method:         "GET",
 		Expires:        expires,
